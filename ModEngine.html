@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modelador 3D Avanzado</title>
+    <style>
+        body { margin: 20px; font-family: 'Arial', sans-serif; background-color: #f0f0f0; }
+        canvas { display: block; border: 1px solid black; margin: 0 auto; }
+        #controls, #groups { margin-bottom: 10px; text-align: center; }
+        button { margin: 5px; padding: 10px; border: none; background-color: #007BFF; color: white; border-radius: 5px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        h3 { font-family: 'Verdana', sans-serif; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button onclick="addShape('cube')">Agregar Cubo</button>
+        <button onclick="addShape('sphere')">Agregar Esfera</button>
+        <button onclick="addShape('cone')">Agregar Cono</button>
+        <button onclick="addShape('cylinder')">Agregar Cilindro</button>
+        <button onclick="addShape('tetrahedron')">Agregar Tetraedro</button>
+        <button onclick="setTransformMode('translate')">Mover</button>
+        <button onclick="setTransformMode('rotate')">Rotar</button>
+        <button onclick="setTransformMode('scale')">Escalar</button>
+        <button onclick="enterSelectionMode()">Modo Selección</button>
+        <button onclick="enterEditMode()">Modo Edición</button>
+        <button onclick="deleteSelected()">Eliminar</button>
+        <input type="file" id="importInput" accept=".gltf,.obj" style="display:none" onchange="importModel(event)">
+        <button onclick="document.getElementById('importInput').click()">Importar Modelo</button>
+        <input type="file" id="textureInput" accept="image/png" style="display:none" onchange="applyTexture(event)">
+        <button onclick="document.getElementById('textureInput').click()">Aplicar Textura</button>
+        <select id="exportFormat">
+            <option value="gltf">GLTF</option>
+            <option value="obj">OBJ</option>
+        </select>
+        <button onclick="exportScene()">Exportar Escena</button>
+    </div>
+    <div id="groups">
+        <h3>GRUPOS</h3>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/OBJExporter.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+    <script>
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 5;
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth - 40, window.innerHeight - 40);
+        document.body.appendChild(renderer.domElement);
+        const orbitControls = new THREE.OrbitControls(camera, renderer.domElement);
+        orbitControls.enablePan = false;
+        orbitControls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+        const transformControls = new THREE.TransformControls(camera, renderer.domElement);
+        scene.add(transformControls);
+        const gridHelper = new THREE.GridHelper(10, 10);
+        scene.add(gridHelper);
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let selectionMode = false;
+        let shapeCount = { cube: 0, sphere: 0, cone: 0, cylinder: 0, tetrahedron: 0 };
+
+        function addShape(type) {
+            let geometry;
+            switch (type) {
+                case 'cube': geometry = new THREE.BoxGeometry(); break;
+                case 'sphere': geometry = new THREE.SphereGeometry(1, 32, 32); break;
+                case 'cone': geometry = new THREE.ConeGeometry(1, 2, 32); break;
+                case 'cylinder': geometry = new THREE.CylinderGeometry(1, 1, 2, 32); break;
+                case 'tetrahedron': geometry = new THREE.TetrahedronGeometry(); break;
+            }
+            const material = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+            const shape = new THREE.Mesh(geometry, material);
+            shapeCount[type]++;
+            const group = new THREE.Group();
+            group.name = `${type}_${shapeCount[type]}`;
+            group.add(shape);
+            scene.add(group);
+            transformControls.attach(group);
+            addGroupToUI(group.name);
+        }
+
+        function addGroupToUI(name) {
+            const groupList = document.getElementById('groups');
+            const button = document.createElement('button');
+            button.textContent = name;
+            button.onclick = () => selectGroup(name);
+            groupList.appendChild(button);
+        }
+
+        function selectGroup(name) {
+            const group = scene.getObjectByName(name);
+            if (group) {
+                transformControls.attach(group);
+            }
+        }
+
+        function setTransformMode(mode) {
+            transformControls.setMode(mode);
+        }
+
+        function applyTexture(event) {
+            const file = event.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const texture = new THREE.TextureLoader().load(e.target.result);
+                const material = new THREE.MeshBasicMaterial({ map: texture });
+                transformControls.object.children.forEach(child => {
+                    child.material = material;
+                });
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function exportScene() {
+            const format = document.getElementById('exportFormat').value;
+            if (format === 'gltf') {
+                const exporter = new THREE.GLTFExporter();
+                exporter.parse(scene, function (result) {
+                    const output = JSON.stringify(result, null, 2);
+                    const blob = new Blob([output], { type: 'application/json' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'scene.gltf';
+                    link.click();
+                });
+            } else if (format === 'obj') {
+                const exporter = new THREE.OBJExporter();
+                const result = exporter.parse(scene);
+                const blob = new Blob([result], { type: 'text/plain' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = 'scene.obj';
+                link.click();
+            }
+        }
+
+        function importModel(event) {
+            const file = event.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const contents = e.target.result;
+                let loader;
+                if (file.name.endsWith('.gltf')) {
+                    loader = new THREE.GLTFLoader();
+                    loader.parse(contents, '', function (gltf) {
+                        const model = gltf.scene;
+                        scene.add(model);
+                        transformControls.attach(model);
+                        addGroupToUI(model.name || 'ImportedModel');
+                    });
+                } else if (file.name.endsWith('.obj')) {
+                    loader = new THREE.OBJLoader();
+                    const model = loader.parse(contents);
+                    scene.add(model);
+                    transformControls.attach(model);
+                    addGroupToUI(model.name || 'ImportedModel');
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function deleteSelected() {
+            const selectedObject = transformControls.object;
+            if (selectedObject) {
+                scene.remove(selectedObject);
+                transformControls.detach();
+                removeGroupFromUI(selectedObject.name);
+            }
+        }
+
+        function removeGroupFromUI(name) {
+            const groupList = document.getElementById('groups');
+            const buttons = groupList.getElementsByTagName('button');
+            for (let i = 0; i < buttons.length; i++) {
+                if (buttons[i].textContent === name) {
+                    groupList.removeChild(buttons[i]);
+                    break;
+                }
+            }
+        }
+
+        function onMouseClick(event) {
+            if (!selectionMode) return;
+            event.preventDefault();
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                        raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(scene.children, true);
+            if (intersects.length > 0) {
+                let selectedObject = intersects[0].object;
+                while (selectedObject.parent && !selectedObject.parent.isScene) {
+                    selectedObject = selectedObject.parent;
+                }
+                transformControls.attach(selectedObject);
+            }
+        }
+        window.addEventListener('click', onMouseClick, false);
+
+        function enterSelectionMode() {
+            selectionMode = true;
+            transformControls.detach();
+        }
+
+        function enterEditMode() {
+            selectionMode = false;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            orbitControls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
